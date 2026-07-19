@@ -1,14 +1,12 @@
 package setting
 
-import "github.com/rancher/per-host-subnet/routeupdate/hostgw"
-
 const (
-	MetadataURL            = "http://%s/2016-07-29"
-	DefaultMetadataAddress = "169.254.169.250"
-)
+	DefaultMetadataURL         = "http://metadata/2016-07-29"
+	DefaultRouteUpdateProvider = "host-gateway"
+	DefaultHostNATIPSet        = "pasturestack-no-host-nat"
+	DefaultNetworkName         = "transparent"
 
-const (
-	DefaultRouteUpdateProvider = hostgw.ProviderName
-
-	DefaultDisableHostNATIPset = "RANCHER_DISABLE_HOST_NAT_IPSET"
+	PerHostSubnetLabel   = "io.pasturestack.network.per-host-subnet.subnet"
+	RouterIPLabel        = "io.pasturestack.network.per-host-subnet.router-ip"
+	OverrideAgentIPLabel = "io.pasturestack.network.per-host-subnet.override-agent-ip"
 )

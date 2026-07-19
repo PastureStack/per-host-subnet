@@ -1,7 +1,12 @@
-//+build !windows
+//go:build !windows
 
 package hostports
 
-import "github.com/rancher/go-rancher-metadata/metadata"
+import (
+	"context"
+	"time"
 
-func Watch(c metadata.Client) error { return nil }
+	"github.com/PastureStack/per-host-subnet/internal/metadata"
+)
+
+func Watch(context.Context, metadata.Client, time.Duration, string) error { return nil }

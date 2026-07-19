@@ -1,18 +1,45 @@
 #!/bin/bash
 
-if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
-    DIRTY="-dirty"
+repository_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
+repository_git_arguments=()
+
+if [ -f "$repository_root/.git" ]; then
+    repository_git_dir=$(sed -n 's/^gitdir: //p' "$repository_root/.git")
+    if [ -z "$repository_git_dir" ]; then
+        echo "The worktree .git file does not contain a gitdir pointer." >&2
+        return 1 2>/dev/null || exit 1
+    fi
+    if [[ "$repository_git_dir" =~ ^[A-Za-z]:/ ]] && command -v wslpath >/dev/null 2>&1; then
+        repository_git_dir=$(wslpath -u "$repository_git_dir")
+    elif [[ "$repository_git_dir" != /* ]]; then
+        repository_git_dir="$repository_root/$repository_git_dir"
+    fi
+    repository_git_arguments=(--git-dir="$repository_git_dir" --work-tree="$repository_root")
 fi
 
-COMMIT=$(git rev-parse --short HEAD)
-GIT_TAG=$(git tag -l --contains HEAD | head -n 1)
+repository_git() {
+    git "${repository_git_arguments[@]}" "$@"
+}
 
-if [[ -z "$DIRTY" && -n "$GIT_TAG" ]]; then
-    VERSION=$GIT_TAG
+if [ -n "${VERSION_OVERRIDE:-}" ]; then
+    VERSION="${VERSION_OVERRIDE}"
+elif [ -n "${RELEASE_VERSION:-}" ]; then
+    VERSION="${RELEASE_VERSION}"
 else
-    VERSION="${COMMIT}${DIRTY}"
+    if [ -n "$(repository_git status --porcelain --untracked-files=no)" ]; then
+        DIRTY="-dirty"
+    fi
+
+    COMMIT=$(repository_git rev-parse --short HEAD)
+    GIT_TAG=$(repository_git tag -l --contains HEAD | head -n 1)
+
+    if [[ -z "${DIRTY:-}" && -n "$GIT_TAG" ]]; then
+        VERSION=$GIT_TAG
+    else
+        VERSION="${COMMIT}${DIRTY:-}"
+    fi
 fi
 
-if [ -z "$ARCH" ]; then
+if [ -z "${ARCH:-}" ]; then
     ARCH=amd64
 fi

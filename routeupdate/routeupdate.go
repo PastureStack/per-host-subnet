@@ -1,26 +1,26 @@
 package routeupdate
 
 import (
-	"github.com/pkg/errors"
-	"github.com/rancher/go-rancher-metadata/metadata"
-	"github.com/rancher/per-host-subnet/routeupdate/hostgw"
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/PastureStack/per-host-subnet/internal/metadata"
+	"github.com/PastureStack/per-host-subnet/routeupdate/hostgw"
 )
 
 type RouteUpdate interface {
-	Start()
-	Reload() error
+	Start(context.Context)
+	Reload(context.Context) error
 }
 
-func Run(provider string, m metadata.Client) (RouteUpdate, error) {
+func Run(ctx context.Context, provider string, client metadata.Client, interval time.Duration) (RouteUpdate, error) {
 	switch provider {
 	case hostgw.ProviderName:
-		r, err := hostgw.New(m)
-		if err != nil {
-			return nil, err
-		}
-		r.Start()
-		return r, nil
+		updater := hostgw.New(client, interval)
+		updater.Start(ctx)
+		return updater, nil
 	default:
-		return nil, errors.New("No provider specified")
+		return nil, fmt.Errorf("unsupported route update provider %q", provider)
 	}
 }

@@ -1,20 +1,32 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
-cd $(dirname $0)/..
+cd "$(dirname "$0")/.."
 
-echo Running validation
+unformatted=$(gofmt -l $(find . -path ./vendor -prune -o -name '*.go' -print))
+if [ -n "$unformatted" ]; then
+    printf 'Unformatted Go files:\n%s\n' "$unformatted" >&2
+    exit 1
+fi
 
-PACKAGES=". $(find -name '*.go' | xargs -I{} dirname {} |  cut -f2 -d/ | sort -u | grep -Ev '(^\.$|.git|.trash-cache|vendor|bin)' | sed -e 's!^!./!' -e 's!$!/...!')"
+go vet ./...
+go mod verify
 
-echo Running: go vet
-go vet ${PACKAGES}
-echo Running: golint
-for i in ${PACKAGES}; do
-    if [ -n "$(golint $i | grep -v 'should have comment.*or be unexported' | tee /dev/stderr)" ]; then
-        failed=true
+if [ -f .git ] && command -v wslpath >/dev/null 2>&1; then
+    worktree_git_dir=$(sed -n 's/^gitdir: //p' .git)
+    if [ -z "$worktree_git_dir" ]; then
+        echo "The worktree .git file does not contain a gitdir pointer." >&2
+        exit 1
     fi
-done
-test -z "$failed"
-echo Running: go fmt
-test -z "$(go fmt ${PACKAGES} | tee /dev/stderr)"
+    worktree_git_dir=$(wslpath -u "$worktree_git_dir")
+    if [ ! -d "$worktree_git_dir" ]; then
+        echo "The translated worktree gitdir does not exist: $worktree_git_dir" >&2
+        exit 1
+    fi
+    git --git-dir="$worktree_git_dir" --work-tree="$PWD" diff --check
+elif git rev-parse --git-dir >/dev/null 2>&1; then
+    git diff --check
+else
+    echo "Unable to run the Git whitespace check in this worktree." >&2
+    exit 1
+fi

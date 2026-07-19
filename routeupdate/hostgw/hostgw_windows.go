@@ -1,98 +1,110 @@
+//go:build windows
+
 package hostgw
 
 import (
+	"context"
 	"fmt"
+	"log/slog"
 	"net"
+	"time"
 
-	log "github.com/Sirupsen/logrus"
-	"github.com/pkg/errors"
-	"github.com/rancher/go-rancher-metadata/metadata"
-	winroute "github.com/rancher/win-route-netsh"
+	"github.com/PastureStack/per-host-subnet/internal/metadata"
+	"github.com/PastureStack/per-host-subnet/setting"
 )
 
-const (
-	ProviderName = "hostgw"
-
-	changeCheckInterval = 5
-	perHostSubnetLabel  = "io.rancher.network.per_host_subnet.subnet"
-	routerIPLabel       = "io.rancher.network.per_host_subnet.router_ip"
-)
+const ProviderName = "host-gateway"
 
 type HostGw struct {
-	m metadata.Client
-	r winroute.IRouter
+	client   metadata.Client
+	interval time.Duration
+	routes   windowsRouteOperations
+	owned    map[string]windowsRoute
 }
 
-func New(m metadata.Client) (*HostGw, error) {
-	o := &HostGw{
-		m: m,
-		r: winroute.New(),
+func New(client metadata.Client, interval time.Duration) *HostGw {
+	return &HostGw{client: client, interval: interval, routes: newPowerShellRouteOperations(), owned: map[string]windowsRoute{}}
+}
+
+func (updater *HostGw) Start(ctx context.Context) {
+	go func() {
+		if err := updater.client.Watch(ctx, updater.interval, updater.Reload); err != nil && ctx.Err() == nil {
+			slog.Error("host gateway route watcher stopped", "error", err)
+		}
+	}()
+}
+
+func (updater *HostGw) Reload(ctx context.Context) error {
+	selfHost, err := updater.client.SelfHost(ctx)
+	if err != nil {
+		return fmt.Errorf("read self host metadata: %w", err)
 	}
-	return o, nil
-}
-
-func (p *HostGw) Start() {
-	go p.m.OnChange(changeCheckInterval, p.onChangeNoError)
-}
-
-// TODO p.r.Close() when a stop signal is received
-
-func (p *HostGw) onChangeNoError(version string) {
-	if err := p.Reload(); err != nil {
-		log.Errorf("Failed to apply host route : %v", err)
+	hosts, err := updater.client.Hosts(ctx)
+	if err != nil {
+		return fmt.Errorf("read host metadata: %w", err)
 	}
-}
-
-func (p *HostGw) Reload() error {
-	log.Debug("HostGW: reload")
-	if err := p.configure(); err != nil {
-		return errors.Wrap(err, "Failed to reload hostgw routes")
+	if _, err := hostSubnetWindows(selfHost); err != nil {
+		return err
+	}
+	routerIP, err := hostRouterIP(selfHost)
+	if err != nil {
+		return err
+	}
+	interfaces, err := interfacesWithAddress(routerIP)
+	if err != nil {
+		return err
+	}
+	if len(interfaces) != 1 {
+		return fmt.Errorf("router IP must match exactly one local interface; matched %d", len(interfaces))
+	}
+	current, err := updater.routes.List(ctx, uint32(interfaces[0].Index))
+	if err != nil {
+		return fmt.Errorf("read managed routes: %w", err)
+	}
+	desired, err := desiredWindowsRoutes(selfHost, hosts, uint32(interfaces[0].Index))
+	if err != nil {
+		return fmt.Errorf("build desired routes: %w", err)
+	}
+	if err := reconcileWindowsRoutes(ctx, updater.routes, current, desired, updater.owned); err != nil {
+		return fmt.Errorf("update managed routes: %w", err)
 	}
 	return nil
 }
 
-func (p *HostGw) configure() error {
-	log.Debug("HostGW: reload")
+func hostRouterIP(host metadata.Host) (net.IP, error) {
+	address := net.ParseIP(host.Labels[setting.RouterIPLabel])
+	if address == nil || address.To4() == nil {
+		return nil, fmt.Errorf("host %q has an invalid router IP label", host.UUID)
+	}
+	return address.To4(), nil
+}
 
-	selfHost, err := p.m.GetSelfHost()
-	if err != nil {
-		return errors.Wrap(err, "Failed to get self host from metadata")
+func hostSubnetWindows(host metadata.Host) (*net.IPNet, error) {
+	_, subnet, err := net.ParseCIDR(host.Labels[setting.PerHostSubnetLabel])
+	if err != nil || subnet.IP.To4() == nil {
+		return nil, fmt.Errorf("host %q has an invalid IPv4 per-host subnet", host.UUID)
 	}
-	allHosts, err := p.m.GetHosts()
-	if err != nil {
-		return errors.Wrap(err, "Failed to get all hosts from metadata")
-	}
-	_, ipNet, err := net.ParseCIDR(selfHost.Labels[perHostSubnetLabel])
-	if err != nil {
-		return errors.Wrapf(err, "Selfhost subnet configuration error")
-	}
+	return subnet, nil
+}
 
-	routerIpAddress, ok := selfHost.Labels[routerIPLabel]
-	if !ok {
-		log.Warnf("this host %s don't have lable $s, skip this host", selfHost.UUID, routerIPLabel)
-		return fmt.Errorf("this host %s don't have lable $s, skip this host", selfHost.UUID, routerIPLabel)
-	}
-	// interface indeces aren't static, do a lookup each pass
-	Is, err := getInterfaceFromAddress(routerIpAddress)
+func interfacesWithAddress(target net.IP) ([]net.Interface, error) {
+	interfaces, err := net.Interfaces()
 	if err != nil {
-		return errors.Wrap(err, "Failed to get Interface by agent ip")
+		return nil, err
 	}
-	//ToDo Locate the interface more precisely
-	if len(Is) != 1 {
-		return errors.New("")
+	var matches []net.Interface
+	for _, candidate := range interfaces {
+		addresses, err := candidate.Addrs()
+		if err != nil {
+			return nil, err
+		}
+		for _, raw := range addresses {
+			address, _, err := net.ParseCIDR(raw.String())
+			if err == nil && address.Equal(target) {
+				matches = append(matches, candidate)
+				break
+			}
+		}
 	}
-
-	currentRoutes, err := p.getCurrentRouteEntries(Is[0], selfHost, ipNet)
-	if err != nil {
-		return errors.Wrap(err, "Failed to getCurrentRouteEntries")
-	}
-	desiredRoutes, err := p.getDesiredRouteEntries(Is[0], selfHost, allHosts)
-	if err != nil {
-		return errors.Wrap(err, "Failed to getDesiredRouteEntries")
-	}
-	err = p.updateRoutes(currentRoutes, desiredRoutes)
-	if err != nil {
-		return errors.Wrap(err, "Failed to updateRoutes")
-	}
-	return err
+	return matches, nil
 }

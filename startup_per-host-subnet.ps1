@@ -1,282 +1,171 @@
-## rancher-tools.psm1 will be exsit in c:\program files\rancher and same path as this script
-## rancher-tools.psm1 is matained in rancher/rancher
-Import-Module -Name ./rancher-tools.psm1 -Verbose
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$AdapterName,
 
-$SubnetKey="io.rancher.network.per_host_subnet.subnet"
-$routerIpKey="io.rancher.network.per_host_subnet.router_ip"
-$hypervAdapterMark="Hyper-V Virtual Ethernet Adapter*"
-$LoopbackAdapterMark="Microsoft KM-TEST Loopback Adapter"
-$defaultNetworkName="transparent"
-$networkDriverName="transparent"
-function Test-TransparentNetwork([string]$Subnet) {
-    
-    $output=docker network inspect $defaultNetworkName 2>$null
-    if ("$output" -eq "[]"){
+    [string]$NetworkName = "transparent",
+    [string]$Subnet,
+    [string]$RouterIP,
+    [string]$MetadataURL = "http://metadata/2016-07-29",
+    [string]$MetadataCARoot,
+    [string]$ExecutablePath = "$env:ProgramFiles\PastureStack\per-host-subnet.exe",
+    [switch]$Apply
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+
+$ServiceName = "pasturestack-per-host-subnet"
+$SubnetLabel = "io.pasturestack.network.per-host-subnet.subnet"
+$RouterIPLabel = "io.pasturestack.network.per-host-subnet.router-ip"
+
+function ConvertTo-IPv4Number {
+    param([Parameter(Mandatory = $true)][System.Net.IPAddress]$Address)
+
+    $bytes = $Address.GetAddressBytes()
+    if ($bytes.Length -ne 4) {
+        throw "Only IPv4 addresses are supported."
+    }
+    return ([uint64]$bytes[0] -shl 24) -bor ([uint64]$bytes[1] -shl 16) -bor ([uint64]$bytes[2] -shl 8) -bor [uint64]$bytes[3]
+}
+
+function Test-IPv4CIDRContains {
+    param(
+        [Parameter(Mandatory = $true)][string]$CIDR,
+        [Parameter(Mandatory = $true)][string]$Address
+    )
+
+    $parts = $CIDR.Split("/")
+    if ($parts.Length -ne 2) {
         return $false
     }
-    $Network= ConvertFrom-Json "$output"
-    if("$Subnet" -ne $network.IPAM.Config.subnet){
+    $networkAddress = $null
+    $candidateAddress = $null
+    $prefix = 0
+    if (-not [System.Net.IPAddress]::TryParse($parts[0], [ref]$networkAddress) -or
+        -not [System.Net.IPAddress]::TryParse($Address, [ref]$candidateAddress) -or
+        -not [int]::TryParse($parts[1], [ref]$prefix) -or
+        $prefix -lt 1 -or $prefix -gt 30 -or
+        $networkAddress.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork -or
+        $candidateAddress.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork) {
         return $false
+    }
+    $mask = ([uint64]0xFFFFFFFF -shl (32 - $prefix)) -band [uint64]0xFFFFFFFF
+    return ((ConvertTo-IPv4Number $networkAddress) -band $mask) -eq ((ConvertTo-IPv4Number $candidateAddress) -band $mask)
+}
+
+function Get-MetadataLabel {
+    param(
+        [Parameter(Mandatory = $true)]$Labels,
+        [Parameter(Mandatory = $true)][string]$Name
+    )
+
+    $property = $Labels.PSObject.Properties[$Name]
+    if ($null -eq $property -or [string]::IsNullOrWhiteSpace([string]$property.Value)) {
+        throw "Metadata label '$Name' is missing."
+    }
+    return [string]$property.Value
+}
+
+function Get-NetworkConfiguration {
+    if (-not [string]::IsNullOrWhiteSpace($script:Subnet) -and -not [string]::IsNullOrWhiteSpace($script:RouterIP)) {
+        return
+    }
+    $selfHostURL = $MetadataURL.TrimEnd("/") + "/self/host"
+    $hostMetadata = Invoke-RestMethod -Method Get -Uri $selfHostURL -UseBasicParsing
+    if ([string]::IsNullOrWhiteSpace($script:Subnet)) {
+        $script:Subnet = Get-MetadataLabel -Labels $hostMetadata.labels -Name $SubnetLabel
+    }
+    if ([string]::IsNullOrWhiteSpace($script:RouterIP)) {
+        $script:RouterIP = Get-MetadataLabel -Labels $hostMetadata.labels -Name $RouterIPLabel
+    }
+}
+
+function Test-ExistingNetwork {
+    $raw = & docker network inspect $NetworkName 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        return $false
+    }
+    $network = $raw | ConvertFrom-Json
+    $candidate = @($network)[0]
+    if ($candidate.Driver -ne "transparent") {
+        throw "Docker network '$NetworkName' exists with a different driver."
+    }
+    $ipam = @($candidate.IPAM.Config)[0]
+    if ($ipam.Subnet -ne $Subnet -or $ipam.Gateway -ne $RouterIP) {
+        throw "Docker network '$NetworkName' exists with different address settings."
+    }
+    $configuredAdapter = [string]$candidate.Options."com.docker.network.windowsshim.interface"
+    if ($configuredAdapter -ne $AdapterName) {
+        throw "Docker network '$NetworkName' exists on a different adapter."
     }
     return $true
 }
-function New-TransparentNetwork {
-    param(
-        [string]$subnet,
-        [string]$interfaceName,
-        [array]$dnsservers
+
+function Set-ServiceEnvironment {
+    $environment = @(
+        "PLATFORM_METADATA_URL=$MetadataURL",
+        "PLATFORM_ENABLE_ROUTE_UPDATE=true",
+        "PLATFORM_NAT_INTERFACE=$AdapterName"
     )
-    $gateway,$subnetip,$MaskLength = ConvertTo-GatewayFromCidr $subnet
-    if(("$gateway" -eq "") -or ("$subnet" -eq "")){
-        throw "subnet $subnet is not valid"
+    if (-not [string]::IsNullOrWhiteSpace($MetadataCARoot)) {
+        $environment += "PLATFORM_CA_ROOT=$MetadataCARoot"
     }
-    if("$interfaceName" -eq ""){
-        throw "Adatper Name $AdapterName is not valid"
-    }
-    $interfaceMAC=(get-netadapter -Name "$interfaceName").MacAddress
-    $uuid=docker network create -d $networkDriverName --subnet $subnet --gateway $gateway -o com.docker.network.windowsshim.interface="$interfaceName" -o com.docker.network.windowsshim.dnsservers="$dnsservers" $defaultNetworkName 2>$null
-    if(-not $(Test-TransparentNetwork $subnet)){
-        throw "generate network error, docker network create faild"
-    }
-    $newIndex=(get-netadapter |Where-Object {$_.macaddress -eq "$interfaceMAC"} |Sort-Object -Property ifindex -Descending|Select-Object -First 1 ).ifIndex
-    $add=New-NetIpAddress -ifIndex $newIndex -ipaddress $gateway -prefixLength $MaskLength
-    return $newIndex
-}
-function Remove-RancherNetwork{
-
-    $body=docker network inspect $defaultNetworkName 2>$null
-    if("$body" -eq "[]"){
-        return
-    }
-    $output=$(docker network rm $defaultNetworkName 2>$null)
-    if("$output" -ne "$defaultNetworkName"){
-        throw "remove $defaultNetworkName fail"
-    }
+    $serviceKey = "HKLM:\SYSTEM\CurrentControlSet\Services\$ServiceName"
+    New-ItemProperty -Path $serviceKey -Name Environment -PropertyType MultiString -Value $environment -Force | Out-Null
 }
 
-# return gateway subnet maskLength
-function ConvertTo-GatewayFromCidr  {
-    param(
-        [string]$cidr
-    )
-    process{
-    $strs=$cidr.Split("/")
-    $out=new-object net.ipaddress(0)
-    if(-not [System.net.ipaddress]::TryParse($strs[0],[ref] $out)){
-        return "",""
-    }
-    $mask = ConvertTo-Mask $strs[1] | ConvertTo-DecimalIP
-    $Dsubnet=(ConvertTo-DecimalIP $out) -band $mask
-    $Dgateway=$Dsubnet+1
-    $gateway=ConvertTo-DottedDecimalIP $Dgateway
-    $subnet= ConvertTo-DottedDecimalIP $Dsubnet
-    if(($(ConvertTo-DecimalIP $gateway) -band $mask) -ne $Dsubnet){
-        return ""
-    }
-    return $gateway,$subnet,$([Convert]::ToInt32($strs[1]))
+Get-NetworkConfiguration
+if (-not (Test-IPv4CIDRContains -CIDR $Subnet -Address $RouterIP)) {
+    throw "RouterIP must be a usable IPv4 address inside Subnet."
+}
+if (-not (Test-Path -LiteralPath $ExecutablePath -PathType Leaf)) {
+    throw "Executable not found: $ExecutablePath"
+}
+$adapter = Get-NetAdapter -Name $AdapterName
+if ($adapter.Status -ne "Up") {
+    throw "Adapter '$AdapterName' is not up."
+}
+$remoteAccess = Get-Service -Name RemoteAccess -ErrorAction SilentlyContinue
+if ($null -eq $remoteAccess -or $remoteAccess.Status -ne "Running") {
+    throw "The Windows Routing and Remote Access service must be configured and running before this tool is applied."
+}
+
+$networkExists = Test-ExistingNetwork
+if (-not $Apply) {
+    Write-Output "Validation succeeded. No changes were made."
+    Write-Output "Network exists: $networkExists"
+    Write-Output "Re-run with -Apply to create the network when absent and register the service."
+    return
+}
+
+if (-not $networkExists) {
+    & docker network create --driver transparent --subnet $Subnet --gateway $RouterIP --opt "com.docker.network.windowsshim.interface=$AdapterName" $NetworkName | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Docker network creation failed."
     }
 }
 
-function ConvertTo-Mask {
-<#
-    .Synopsis
-    Returns a dotted decimal subnet mask from a mask length.
-    .Description
-    ConvertTo-Mask returns a subnet mask in dotted decimal format from an integer value ranging 
-    between 0 and 32. ConvertTo-Mask first creates a binary string from the length, converts 
-    that to an unsigned 32-bit integer then calls ConvertTo-DottedDecimalIP to complete the operation.
-    .Parameter MaskLength
-    The number of bits which must be masked.
-#>
-
-param(
-    [Parameter(Mandatory = $true, Position = 0, ValueFromPipeline = $true)]
-    [Alias("Length")]
-    [ValidateRange(0, 32)]
-    $MaskLength
-)
-
-Process {
-    return ConvertTo-DottedDecimalIP ([Convert]::ToUInt32($(("1" * $MaskLength).PadRight(32, "0")), 2)).ToString()
-}
-}
-function ConvertTo-DottedDecimalIP {
-<#
-    .Synopsis
-    Returns a dotted decimal IP address from either an unsigned 32-bit integer or a dotted binary string.
-    .Description
-    ConvertTo-DottedDecimalIP uses a regular expression match on the input string to convert to an IP address.
-    .Parameter IPAddress
-    A string representation of an IP address from either UInt32 or dotted binary.
-#>
-
-    param(
-        [Parameter(Mandatory = $true, Position = 0, ValueFromPipeline = $true)]
-        [String]$IPAddress
-    )
-
-    process {
-        Switch -RegEx ($IPAddress) {
-        "([01]{8}.){3}[01]{8}" {
-            return [String]::Join('.', $( $IPAddress.Split('.') | ForEach-Object { [Convert]::ToUInt32($_, 2) } ))
-        }
-        "\d" {
-            $IPAddress = [UInt32]$IPAddress
-            $DottedIP = $( For ($i = 3; $i -gt -1; $i--) {
-            $Remainder = $IPAddress % [Math]::Pow(256, $i)
-            ($IPAddress - $Remainder) / [Math]::Pow(256, $i)
-            $IPAddress = $Remainder
-            } )
-            
-            return [String]::Join('.', $DottedIP)
-        }
-        default {
-            Write-Error "Cannot convert this format"
-        }
-        }
+$existingService = Get-CimInstance Win32_Service -Filter "Name='$ServiceName'" -ErrorAction SilentlyContinue
+if ($null -ne $existingService) {
+    $expectedPath = [System.IO.Path]::GetFullPath($ExecutablePath)
+    $registeredPath = [string]$existingService.PathName
+    $quotedExpectedPath = '"' + $expectedPath + '"'
+    if ($registeredPath -ne $expectedPath -and
+        -not $registeredPath.StartsWith($quotedExpectedPath + " ", [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "The existing service points to a different executable and was not changed."
+    }
+    Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
+    & $ExecutablePath --unregister-service
+    if ($LASTEXITCODE -ne 0) {
+        throw "Service unregistration failed."
     }
 }
 
-function ConvertTo-DecimalIP {
-  <#
-    .Synopsis
-      Converts a Decimal IP address into a 32-bit unsigned integer.
-    .Description
-      ConvertTo-DecimalIP takes a decimal IP, uses a shift-like operation on each octet and returns a single UInt32 value.
-    .Parameter IPAddress
-      An IP Address to convert.
-  #>
-  
-  [CmdLetBinding()]
-  param(
-    [Parameter(Mandatory = $true, Position = 0, ValueFromPipeline = $true)]
-    [Net.IPAddress]$IPAddress
-  )
-
-  process {
-    $i = 3; $DecimalIP = 0;
-    $IPAddress.GetAddressBytes() | ForEach-Object { $DecimalIP += $_ * [Math]::Pow(256, $i); $i-- }
-
-    return [UInt32]$DecimalIP
-  }
+& $ExecutablePath --register-service
+if ($LASTEXITCODE -ne 0) {
+    throw "Service registration failed."
 }
-function ConvertTo-DecimalIP {
-  <#
-    .Synopsis
-      Converts a Decimal IP address into a 32-bit unsigned integer.
-    .Description
-      ConvertTo-DecimalIP takes a decimal IP, uses a shift-like operation on each octet and returns a single UInt32 value.
-    .Parameter IPAddress
-      An IP Address to convert.
-  #>
-  
-  param(
-    [Parameter(Mandatory = $true, Position = 0, ValueFromPipeline = $true)]
-    [Net.IPAddress]$IPAddress
-  )
- 
-  process {
-    $i = 3; $DecimalIP = 0;
-    $IPAddress.GetAddressBytes() | ForEach-Object { $DecimalIP += $_ * [Math]::Pow(256, $i); $i-- }
- 
-    return [UInt32]$DecimalIP
-  }
-}
-
-function RestartRRAS  {
-    $serviceStartType=$(get-service remoteaccess).StartType
-    if("$serviceStartType" -ne "Automatic"){
-        set-service remoteaccess -StartupType Automatic
-    }
-    restart-service remoteaccess
-    Start-Sleep 5
-}
-function SetMetadataRoute  {
-    param(
-        [uint32]$ifIndex
-    )
-    process{
-        <#When we deploy it into aws, default 169.254.169.250 route needs to be remove and reset.#>
-        $curr=get-netroute "169.254.169.250/32" -ErrorAction Ignore 
-        if($curr -ne $null){
-            $curr | remove-netroute -Confirm:$false
-        }
-        if($ifIndex -eq 0){
-            return
-        }
-        $route=new-netroute "169.254.169.250/32" -ifIndex $ifIndex -nextHop 0.0.0.0
-    }
-}
-
-function SetupRRASNat{
-    param(
-        [array]$natAdapters
-    )
-    process{
-        $_=$(netsh routing ip nat install)
-        foreach($adapter in $natAdapters){
-            $_=$(netsh routing ip nat add interface "$($adapter.Name)" full  2>$err)
-            if($err -ne $null){
-                throw "$err"
-            }
-        }
-    }
-}
-
-function installVirtualNic  {
-    $_=$(& "c:\program files\rancher\devcon.exe" -r install $env:windir\Inf\Netloop.inf *MSLOOP)
-    sleep 10
-    return (Get-NetAdapter | Where-Object {$_.InterfaceDescription -eq "$LoopbackAdapterMark"}).Name
-}
-
-function Get-NeededNatAdapters{
-    $routerip= Get-RancherLabel $routerIpKey
-    $routeripadd=Get-NetIPAddress -IPAddress "$routerip" -ErrorAction Ignore 
-    if($routeripadd -eq $null){
-        throw "$routerip not found"
-    }
-    return $(Get-netadapter |where-object {$_.InterfaceDescription -NotLike "$hypervAdapterMark" -and $_.ifIndex -ne $routeripadd.InterfaceIndex -and $_.InterfaceDescription -notlike "$LoopbackAdapterMark"})
-}
-
-function Get-NatDNSServers ($natAdapters) {
-    $dnsservers=@{}
-    foreach ($adapter in $natAdapters) {
-        $dservers=($adapter | Get-DnsClientServerAddress -AddressFamily IPv4 -ErrorAction ignore)
-        if($dservers -eq $null){
-            continue
-        }
-        foreach ($ds in $dservers.ServerAddresses) {
-            $dnsservers["$ds"]=$true
-        }
-    }
-    $rtn= ($dnsservers.Keys -join ",")
-    return $rtn
-}
-
-try{
-    $ifIndex=0
-    $natAdapters=Get-NeededNatAdapters
-    $dnsservers=Get-NatDNSServers $natAdapters
-    $subnet=Get-RancherLabel -Key $SubnetKey 
-    if ("$subnet" -eq ""){
-        throw "Can not get configured subnet"
-    }
-    if (-not $(Test-TransparentNetwork -Subnet $subnet)){
-        $adapterName=installVirtualNic
-        Remove-RancherNetwork
-        $ifIndex= New-TransparentNetwork $subnet $adapterName $dnsservers
-        $_=(netsh advfirewall set allprofile state off)
-        RestartRRAS
-        SetupRRASNat $natAdapters
-        SetMetadataRoute $ifIndex
-    }
-    $service=get-service rancher-per-host-subnet -ErrorAction Ignore
-    if($service -ne $null){
-        & 'C:\Program Files\rancher\per-host-subnet.exe' --unregister-service
-    }
-    & 'C:\Program Files\rancher\per-host-subnet.exe' --register-service
-    start-service rancher-per-host-subnet
-}
-catch {
-    Throw $Error[0]
-}
+Set-ServiceEnvironment
+Start-Service -Name $ServiceName
+Write-Output "PastureStack per-host subnet networking is configured."
