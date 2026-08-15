@@ -3,6 +3,14 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+expected_go_version="go1.26.6"
+actual_go_version=$(go env GOVERSION)
+if [ "$actual_go_version" != "$expected_go_version" ]; then
+    printf 'Go toolchain mismatch: expected %s, got %s\n' "$expected_go_version" "$actual_go_version" >&2
+    exit 1
+fi
+grep -Fxq 'toolchain go1.26.6' go.mod
+
 unformatted=$(gofmt -l $(find . -path ./vendor -prune -o -name '*.go' -print))
 if [ -n "$unformatted" ]; then
     printf 'Unformatted Go files:\n%s\n' "$unformatted" >&2

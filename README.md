@@ -4,7 +4,7 @@ Per-Host Subnet maintains host-specific IPv4 routes and selected host-network st
 
 PastureStack is an independent community effort to preserve, audit, and modernize the Rancher 1.6 ecosystem. It is not affiliated with or endorsed by Rancher Labs or SUSE.
 
-**Upstream:** [`rancher/per-host-subnet`](https://github.com/rancher/per-host-subnet). This GitHub fork retains the upstream Git history, authorship, dates, and license notices unchanged; PastureStack maintenance is consolidated into one commit after the preserved upstream boundary.
+**Upstream:** [`rancher/per-host-subnet`](https://github.com/rancher/per-host-subnet). This GitHub fork retains the upstream Git history, authorship, dates, and license notices unchanged. The migration baseline is consolidated immediately after the preserved upstream boundary; later maintenance remains visible as ordinary reviewable commits.
 
 The preserved upstream release boundary is `v0.2.4`. Labels `v0.2.5` and `v0.2.6` existed only in a later local maintenance fork and are not represented as upstream releases here. Their reviewed Ubuntu and Go compatibility changes are retained in the PastureStack maintenance commit without inventing an upstream version.
 
@@ -26,7 +26,7 @@ The Windows setup script performs validation only unless `-Apply` is supplied. I
 
 ## Requirements
 
-- Go 1.26 or newer for local development.
+- Go 1.26.6, as fixed by the `toolchain` directive and CI.
 - Linux: `ipset` plus permission to manage routes and the dedicated IP set.
 - Windows: Docker with transparent-network support, PowerShell networking cmdlets, and a preconfigured running Routing and Remote Access service.
 - A compatible metadata service. Real platform integration and privileged network-namespace tests remain pending.

@@ -1,0 +1,62 @@
+name: Build and test
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: per-host-subnet-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test-package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # releases/v6 commit
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.6'
+          cache: true
+
+      - name: Validate, test, and package
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(go env GOVERSION)" = 'go1.26.6'
+          test -z "$(git status --porcelain)"
+          bash scripts/validate
+          ARCH=amd64 bash scripts/test
+          CROSS=1 bash scripts/build
+          SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)" bash scripts/package
+          mkdir -p evidence
+          go version > evidence/go-version.txt
+          go env -json GOOS GOARCH GOVERSION GOMOD GOENV > evidence/go-environment.json
+          go list -m -json all > evidence/go-modules.json
+          sha256sum dist/artifacts/* > evidence/artifacts.sha256
+
+      - name: Upload build evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: per-host-subnet-${{ github.sha }}
+          path: |
+            dist/artifacts/
+            evidence/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 9
