@@ -22,7 +22,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Check out source
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # releases/v6 commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -30,14 +30,14 @@ jobs:
       - name: Install Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.26.6'
+          go-version: '1.27.0'
           cache: true
 
       - name: Validate, test, and package
         shell: bash
         run: |
           set -euo pipefail
-          test "$(go env GOVERSION)" = 'go1.26.6'
+          test "$(go env GOVERSION)" = 'go1.27.0'
           test -z "$(git status --porcelain)"
           bash scripts/validate
           ARCH=amd64 bash scripts/test

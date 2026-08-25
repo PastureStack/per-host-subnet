@@ -26,7 +26,7 @@ The Windows setup script performs validation only unless `-Apply` is supplied. I
 
 ## Requirements
 
-- Go 1.26.6, as fixed by the `toolchain` directive and CI.
+- Go 1.27.0, as fixed by the `toolchain` directive and CI.
 - Linux: `ipset` plus permission to manage routes and the dedicated IP set.
 - Windows: Docker with transparent-network support, PowerShell networking cmdlets, and a preconfigured running Routing and Remote Access service.
 - A compatible metadata service. Real platform integration and privileged network-namespace tests remain pending.
