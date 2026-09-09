@@ -8,6 +8,12 @@ PastureStack is an independent community effort to preserve, audit, and moderniz
 
 The preserved upstream release boundary is `v0.2.4`. Labels `v0.2.5` and `v0.2.6` existed only in a later local maintenance fork and are not represented as upstream releases here. Their reviewed Ubuntu and Go compatibility changes are retained in the PastureStack maintenance commit without inventing an upstream version.
 
+GitHub retains the pure numeric `v0.2.7` Linux prerelease as immutable review
+evidence. Current `main` is newer than that tag and has no reserved release
+version. PastureStack Server still carries the separately verified historical
+Windows compatibility asset version `0.2.4`; none of these coordinates may be
+presented as a new current Release.
+
 ## Current scope
 
 - Reads a minimal host, network, and container model from the configured metadata URL.
@@ -39,13 +45,17 @@ go vet ./...
 go build -trimpath -buildvcs=false ./
 ```
 
-The repository also provides `scripts/test`, `scripts/validate`, and `scripts/build` for local validation. A reviewed cross-platform release candidate is built with:
+The repository also provides `scripts/test`, `scripts/validate`, and `scripts/build` for local validation. From current `main`, build a review artifact with the commit-derived development version:
 
 ```sh
-VERSION_OVERRIDE=v0.2.4 SOURCE_DATE_EPOCH=0 make package
+SOURCE_DATE_EPOCH=0 make package
 ```
 
-This produces deterministic flat assets named `per-host-subnet-0.2.4-linux-amd64.tar.xz` and `per-host-subnet-0.2.4-windows-amd64.zip`. PastureStack Server downloads the Windows asset from its versioned GitHub Release and verifies its SHA-256 digest. Operators do not need to host an artifact mirror. No deployment workflow is included at this stage.
+The historical Server build downloads its Windows compatibility asset from the
+matching versioned Server Release and verifies its SHA-256 digest. A future
+Per-Host Subnet publication must first choose an unused pure numeric version,
+rebuild both platform assets, and complete privileged Linux and Windows
+integration. No deployment workflow is included at this stage.
 
 The Windows ZIP retains the internal `rancher/` directory solely for the established Windows agent include/extraction contract. That directory is a compatibility boundary, not current product branding. New executable, service, environment, metadata-label, repository, and external asset names use PastureStack naming.
 
