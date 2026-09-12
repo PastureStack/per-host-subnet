@@ -9,10 +9,10 @@ PastureStack is an independent community effort to preserve, audit, and moderniz
 The preserved upstream release boundary is `v0.2.4`. Labels `v0.2.5` and `v0.2.6` existed only in a later local maintenance fork and are not represented as upstream releases here. Their reviewed Ubuntu and Go compatibility changes are retained in the PastureStack maintenance commit without inventing an upstream version.
 
 GitHub retains the pure numeric `v0.2.7` Linux prerelease as immutable review
-evidence. Current `main` is newer than that tag and has no reserved release
-version. PastureStack Server still carries the separately verified historical
-Windows compatibility asset version `0.2.4`; none of these coordinates may be
-presented as a new current Release.
+evidence. `v0.2.8` is the proposed Linux/amd64 rebuild with Go 1.27.0; it is
+not an available release until its candidate checks pass and the matching
+GitHub asset and SHA-256 are published. PastureStack Server still carries the
+separately verified historical Windows compatibility asset version `0.2.4`.
 
 ## Current scope
 
@@ -45,17 +45,25 @@ go vet ./...
 go build -trimpath -buildvcs=false ./
 ```
 
-The repository also provides `scripts/test`, `scripts/validate`, and `scripts/build` for local validation. From current `main`, build a review artifact with the commit-derived development version:
+The repository also provides `scripts/test`, `scripts/validate`, and `scripts/build` for local validation. To build the `v0.2.8` candidate from a clean reviewed commit:
 
 ```sh
-SOURCE_DATE_EPOCH=0 make package
+RELEASE_VERSION=v0.2.8 SOURCE_DATE_EPOCH=0 make package
 ```
+
+This creates `dist/artifacts/per-host-subnet-v0.2.8-linux-amd64` for the overlay
+package consumer, the Linux archive, a Windows review ZIP, and `SHA256SUMS` for
+the Linux artifacts. Confirm the raw binary's embedded Go version with
+`go version -m`, compare it byte-for-byte with the Linux archive entry, and
+verify `SHA256SUMS` before publishing. Building the Windows review ZIP does not
+approve it for deployment. CI additionally checks the Linux binary's reported
+version and runs `govulncheck` on that exact packaged binary.
 
 The historical Server build downloads its Windows compatibility asset from the
 matching versioned Server Release and verifies its SHA-256 digest. A future
-Per-Host Subnet publication must first choose an unused pure numeric version,
-rebuild both platform assets, and complete privileged Linux and Windows
-integration. No deployment workflow is included at this stage.
+Windows publication still requires privileged Windows integration. The Linux
+binary refresh does not establish privileged two-host, upgrade, or rollback
+compatibility, and no deployment workflow is included at this stage.
 
 The Windows ZIP retains the internal `rancher/` directory solely for the established Windows agent include/extraction contract. That directory is a compatibility boundary, not current product branding. New executable, service, environment, metadata-label, repository, and external asset names use PastureStack naming.
 
