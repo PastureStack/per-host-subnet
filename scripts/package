@@ -7,6 +7,7 @@ cd "$(dirname "$0")/.."
 version="${VERSION#v}"
 linux_binary="bin/linux/amd64/per-host-subnet"
 windows_binary="bin/windows/amd64/per-host-subnet.exe"
+linux_raw="dist/artifacts/per-host-subnet-v${version}-linux-amd64"
 linux_artifact="dist/artifacts/per-host-subnet-${version}-linux-amd64.tar.xz"
 windows_artifact="dist/artifacts/per-host-subnet-${version}-windows-amd64.zip"
 
@@ -20,7 +21,8 @@ done
 rm -rf rootfs
 mkdir -p rootfs/linux/usr/bin dist/artifacts
 install -m 0755 "$linux_binary" rootfs/linux/usr/bin/per-host-subnet
-rm -f "$linux_artifact" "$windows_artifact"
+install -m 0755 "$linux_binary" "$linux_raw"
+rm -f "$linux_artifact" "$windows_artifact" dist/artifacts/SHA256SUMS
 
 XZ_OPT=-9e tar \
     --sort=name \
@@ -57,4 +59,10 @@ with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED, compressleve
         archive.writestr(entry, path.read_bytes())
 PY
 
-printf '%s\n%s\n' "$linux_artifact" "$windows_artifact"
+(
+    cd dist/artifacts
+    sha256sum "${linux_raw##*/}" "${linux_artifact##*/}" > SHA256SUMS
+    sha256sum -c SHA256SUMS
+)
+
+printf '%s\n%s\n%s\n' "$linux_raw" "$linux_artifact" "$windows_artifact"

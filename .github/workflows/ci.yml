@@ -20,6 +20,8 @@ jobs:
   build-test-package:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+    env:
+      RELEASE_VERSION: v0.2.8
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -43,11 +45,30 @@ jobs:
           ARCH=amd64 bash scripts/test
           CROSS=1 bash scripts/build
           SOURCE_DATE_EPOCH="$(git show -s --format=%ct HEAD)" bash scripts/package
+          raw="dist/artifacts/per-host-subnet-${RELEASE_VERSION}-linux-amd64"
+          test -f "$raw"
+          cmp bin/linux/amd64/per-host-subnet "$raw"
+          test "$("$raw" --version)" = "$RELEASE_VERSION"
+          tar -xOf "dist/artifacts/per-host-subnet-${RELEASE_VERSION#v}-linux-amd64.tar.xz" \
+            usr/bin/per-host-subnet | cmp - "$raw"
           mkdir -p evidence
+          go version -m "$raw" | tee evidence/product-go-version.txt
+          grep -F "${raw}: go1.27.0" evidence/product-go-version.txt >/dev/null
+          (cd dist/artifacts && sha256sum -c SHA256SUMS)
           go version > evidence/go-version.txt
           go env -json GOOS GOARCH GOVERSION GOMOD GOENV > evidence/go-environment.json
           go list -m -json all > evidence/go-modules.json
           sha256sum dist/artifacts/* > evidence/artifacts.sha256
+
+      - name: Scan Linux candidate binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin"
+          GOBIN="$RUNNER_TEMP/bin" go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+          "$RUNNER_TEMP/bin/govulncheck" -mode=binary \
+            "dist/artifacts/per-host-subnet-${RELEASE_VERSION}-linux-amd64" \
+            | tee evidence/product-govulncheck.txt
 
       - name: Upload build evidence
         if: always()
