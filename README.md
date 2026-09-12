@@ -9,10 +9,12 @@ PastureStack is an independent community effort to preserve, audit, and moderniz
 The preserved upstream release boundary is `v0.2.4`. Labels `v0.2.5` and `v0.2.6` existed only in a later local maintenance fork and are not represented as upstream releases here. Their reviewed Ubuntu and Go compatibility changes are retained in the PastureStack maintenance commit without inventing an upstream version.
 
 GitHub retains the pure numeric `v0.2.7` Linux prerelease as immutable review
-evidence. `v0.2.8` is the proposed Linux/amd64 rebuild with Go 1.27.0; it is
-not an available release until its candidate checks pass and the matching
-GitHub asset and SHA-256 are published. PastureStack Server still carries the
-separately verified historical Windows compatibility asset version `0.2.4`.
+evidence. The [v0.2.8 Linux/amd64 prerelease](https://github.com/PastureStack/per-host-subnet/releases/tag/v0.2.8)
+rebuilds the binary with Go 1.27.0. Its [raw binary](https://github.com/PastureStack/per-host-subnet/releases/download/v0.2.8/per-host-subnet-v0.2.8-linux-amd64)
+has SHA-256 `d12acca4526eee45d52b87541717ae81432225d9c5dabfd823d6b43631c20e84`;
+the release also includes `SHA256SUMS`, a CycloneDX SBOM, and the binary scan
+report. PastureStack Server still carries the separately verified historical
+Windows compatibility asset version `0.2.4`.
 
 ## Current scope
 
@@ -45,7 +47,7 @@ go vet ./...
 go build -trimpath -buildvcs=false ./
 ```
 
-The repository also provides `scripts/test`, `scripts/validate`, and `scripts/build` for local validation. To build the `v0.2.8` candidate from a clean reviewed commit:
+The repository also provides `scripts/test`, `scripts/validate`, and `scripts/build` for local validation. To reproduce the `v0.2.8` package from its release source:
 
 ```sh
 RELEASE_VERSION=v0.2.8 SOURCE_DATE_EPOCH=0 make package
@@ -55,7 +57,7 @@ This creates `dist/artifacts/per-host-subnet-v0.2.8-linux-amd64` for the overlay
 package consumer, the Linux archive, a Windows review ZIP, and `SHA256SUMS` for
 the Linux artifacts. Confirm the raw binary's embedded Go version with
 `go version -m`, compare it byte-for-byte with the Linux archive entry, and
-verify `SHA256SUMS` before publishing. Building the Windows review ZIP does not
+verify `SHA256SUMS` before use. Building the Windows review ZIP does not
 approve it for deployment. CI additionally checks the Linux binary's reported
 version and runs `govulncheck` on that exact packaged binary.
 
