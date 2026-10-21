@@ -1,27 +1,30 @@
 # Per-Host Subnet
 
-Per-Host Subnet maintains host-specific IPv4 routes and selected host-network state from a platform metadata service. The reviewed source and release-candidate artifacts support Linux and Windows builds, but privileged two-host and Windows upgrade/rollback validation is still required before production use.
+Per-Host Subnet maintains host-specific IPv4 routes and selected host-network state from a platform metadata service. The source and official artifacts support Linux and Windows builds, but privileged two-host and Windows upgrade/rollback validation is still required before production use.
 
 PastureStack is an independent community effort to preserve, audit, and modernize the Rancher 1.6 ecosystem. It is not affiliated with or endorsed by Rancher Labs or SUSE.
 
 **Upstream:** [`rancher/per-host-subnet`](https://github.com/rancher/per-host-subnet). This GitHub fork retains the upstream Git history, authorship, dates, and license notices unchanged. The migration baseline is consolidated immediately after the preserved upstream boundary; later maintenance remains visible as ordinary reviewable commits.
 
-The preserved upstream release boundary is `v0.2.4`. Labels `v0.2.5` and `v0.2.6` existed only in a later local maintenance fork and are not represented as upstream releases here. Their reviewed Ubuntu and Go compatibility changes are retained in the PastureStack maintenance commit without inventing an upstream version.
+The preserved upstream release boundary is `v0.2.4`. Historical labels `v0.2.5` and `v0.2.6` existed in a later local maintenance fork, not as upstream releases. Their reviewed Ubuntu and Go compatibility changes are retained in the PastureStack maintenance commit. The new PastureStack security release below is a separate fork release, not an invented upstream version.
 
 GitHub retains the pure numeric `v0.2.7` Linux prerelease as immutable review
 evidence. The [v0.2.8 Linux/amd64 prerelease](https://github.com/PastureStack/per-host-subnet/releases/tag/v0.2.8)
 rebuilds the binary with Go 1.27.0. Its [raw binary](https://github.com/PastureStack/per-host-subnet/releases/download/v0.2.8/per-host-subnet-v0.2.8-linux-amd64)
 has SHA-256 `d12acca4526eee45d52b87541717ae81432225d9c5dabfd823d6b43631c20e84`;
 the release also includes `SHA256SUMS`, a CycloneDX SBOM, and the binary scan
-report. PastureStack Server still carries the separately verified historical
-Windows compatibility asset version `0.2.4`.
+report. PastureStack Server v1.6.540 carried the separately verified historical
+Windows compatibility asset version `0.2.4`; publishing a replacement here does
+not alter that immutable Server image.
 
-The current source prepares the numeric PastureStack `v0.2.5` security patch
-for the Windows `0.2.4` compatibility payload. It uses Go 1.27.3 without changing
-the network behavior, Go language minimum, or Windows ZIP layout. Publication
-is established by the official release assets and their checksums, not by this
-source statement. The earlier Linux prereleases remain separate historical
-evidence; a Windows cross-build does not establish privileged native support.
+The [PastureStack v0.2.5 security release](https://github.com/PastureStack/per-host-subnet/releases/tag/v0.2.5)
+provides the original CI-tested Linux and Windows amd64 packages built with Go
+1.27.3, replacing the compiler in the Windows `0.2.4` compatibility payload.
+Network behavior, the Go language minimum, and Windows ZIP layout are unchanged.
+Use the immutable official assets, `SHA256SUMS`, and product scan/SBOM evidence;
+later documentation commits are not binary producers. The earlier Linux
+prereleases remain separate historical evidence, and a Windows cross-build does
+not establish privileged native support.
 
 ## Current scope
 
@@ -54,7 +57,7 @@ go vet ./...
 go build -trimpath -buildvcs=false ./
 ```
 
-The repository also provides `scripts/test`, `scripts/validate`, and `scripts/build` for local validation. To reproduce the `v0.2.5` package from its release source:
+The repository also provides `scripts/test`, `scripts/validate`, and `scripts/build` for local validation. To build the `v0.2.5` package layout locally (not to reproduce the original CI archive timestamp):
 
 ```sh
 RELEASE_VERSION=v0.2.5 SOURCE_DATE_EPOCH=0 make package
@@ -74,11 +77,10 @@ CycloneDX SBOMs retained. The existing `-buildvcs=false` contract embeds no VCS
 identity; release provenance instead binds the original CI package bytes to the
 exact source revision and tree. The PE is read and scanned, never executed by CI.
 
-The historical Server build downloads its Windows compatibility asset from the
-matching versioned Server Release and verifies its SHA-256 digest. A future
-Windows publication still requires privileged Windows integration. The Linux
-binary refresh does not establish privileged two-host, upgrade, or rollback
-compatibility, and no deployment workflow is included at this stage.
+Consumers must use the versioned official Windows asset and verify its SHA-256
+digest. Publication and static PE/package qualification do not establish
+privileged Windows integration, two-host, upgrade, or rollback compatibility;
+no deployment workflow is included at this stage.
 
 The Windows ZIP retains the internal `rancher/` directory solely for the established Windows agent include/extraction contract. That directory is a compatibility boundary, not current product branding. New executable, service, environment, metadata-label, repository, and external asset names use PastureStack naming.
 
