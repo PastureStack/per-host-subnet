@@ -21,7 +21,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
-      RELEASE_VERSION: v0.2.8
+      RELEASE_VERSION: v0.2.5
+      GOTOOLCHAIN: local
+      TRIVY_IMAGE: aquasec/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969
     steps:
       - name: Check out source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -30,16 +32,25 @@ jobs:
           persist-credentials: false
 
       - name: Install Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: '1.27.0'
-          cache: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_ARCH" = X64
+          sdk="$RUNNER_TEMP/go1.27.3.linux-amd64.tar.gz"
+          curl --fail --silent --show-error --location --retry 2 \
+            https://go.dev/dl/go1.27.3.linux-amd64.tar.gz --output "$sdk"
+          printf '%s  %s\n' \
+            65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40 \
+            "$sdk" | sha256sum --check --strict -
+          mkdir -p "$RUNNER_TEMP/per-host-subnet-go"
+          tar -xzf "$sdk" -C "$RUNNER_TEMP/per-host-subnet-go"
+          printf '%s\n' "$RUNNER_TEMP/per-host-subnet-go/go/bin" >> "$GITHUB_PATH"
 
       - name: Validate, test, and package
         shell: bash
         run: |
           set -euo pipefail
-          test "$(go env GOVERSION)" = 'go1.27.0'
+          test "$(go env GOVERSION)" = 'go1.27.3'
           test -z "$(git status --porcelain)"
           bash scripts/validate
           ARCH=amd64 bash scripts/test
@@ -53,12 +64,53 @@ jobs:
             usr/bin/per-host-subnet | cmp - "$raw"
           mkdir -p evidence
           go version -m "$raw" | tee evidence/product-go-version.txt
-          grep -F "${raw}: go1.27.0" evidence/product-go-version.txt >/dev/null
+          grep -F "${raw}: go1.27.3" evidence/product-go-version.txt >/dev/null
+          go version -m bin/windows/amd64/per-host-subnet.exe \
+            | tee evidence/windows-product-go-version.txt
+          for platform in linux windows; do
+            report=evidence/product-go-version.txt
+            if [ "$platform" = windows ]; then
+              report=evidence/windows-product-go-version.txt
+            fi
+            grep -F ': go1.27.3' "$report" >/dev/null
+            grep -Fx $'\tbuild\tCGO_ENABLED=0' "$report" >/dev/null
+            grep -Fx $'\tbuild\tGOOS='"$platform" "$report" >/dev/null
+            grep -Fx $'\tbuild\tGOARCH=amd64' "$report" >/dev/null
+            grep -Fx $'\tbuild\tGOAMD64=v1' "$report" >/dev/null
+            if grep -Eq $'^\tbuild\tvcs[.=]' "$report"; then
+              printf 'Unexpected VCS metadata with the existing buildvcs=false contract\n' >&2
+              exit 1
+            fi
+          done
+          python3 - <<'PY'
+          import hashlib
+          import pathlib
+          import struct
+          import zipfile
+          executable = pathlib.Path('bin/windows/amd64/per-host-subnet.exe').read_bytes()
+          assert executable[:2] == b'MZ'
+          offset = struct.unpack_from('<I', executable, 0x3c)[0]
+          assert executable[offset:offset + 4] == b'PE\0\0'
+          assert struct.unpack_from('<H', executable, offset + 4)[0] == 0x8664
+          with zipfile.ZipFile('dist/artifacts/per-host-subnet-0.2.5-windows-amd64.zip') as archive:
+              assert archive.namelist() == [
+                  'rancher/', 'rancher/per-host-subnet.exe',
+                  'rancher/startup_per-host-subnet.ps1',
+              ]
+              assert archive.read('rancher/per-host-subnet.exe') == executable
+              assert archive.read('rancher/startup_per-host-subnet.ps1') == pathlib.Path('startup_per-host-subnet.ps1').read_bytes()
+          assert hashlib.sha256(pathlib.Path('startup_per-host-subnet.ps1').read_bytes()).hexdigest() == 'f22b41f18d1733c037babed4d2e0474efeedc6017a96849d4309dd864f5f86d1'
+          PY
           (cd dist/artifacts && sha256sum -c SHA256SUMS)
           go version > evidence/go-version.txt
           go env -json GOOS GOARCH GOVERSION GOMOD GOENV > evidence/go-environment.json
           go list -m -json all > evidence/go-modules.json
+          git rev-parse HEAD > evidence/source-revision.txt
+          git rev-parse HEAD^{tree} > evidence/source-tree.txt
           sha256sum dist/artifacts/* > evidence/artifacts.sha256
+          sha256sum bin/linux/amd64/per-host-subnet bin/windows/amd64/per-host-subnet.exe \
+            startup_per-host-subnet.ps1 LICENSE THIRD_PARTY_NOTICES.md \
+            > evidence/product-bytes.sha256
 
       - name: Scan Linux candidate binary
         shell: bash
@@ -69,6 +121,42 @@ jobs:
           "$RUNNER_TEMP/bin/govulncheck" -mode=binary \
             "dist/artifacts/per-host-subnet-${RELEASE_VERSION}-linux-amd64" \
             | tee evidence/product-govulncheck.txt
+
+      - name: Scan exact Linux and Windows product binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull "$TRIVY_IMAGE"
+          cache="$RUNNER_TEMP/per-host-subnet-trivy-cache"
+          product_tree="$(mktemp -d)"
+          trap 'rm -rf "$product_tree"' EXIT
+          mkdir -p "$cache" "$product_tree/linux" "$product_tree/windows"
+          install -m 0700 bin/linux/amd64/per-host-subnet "$product_tree/linux/per-host-subnet"
+          install -m 0700 bin/windows/amd64/per-host-subnet.exe "$product_tree/windows/per-host-subnet.exe"
+          docker run --rm -v "$cache:/root/.cache/trivy" "$TRIVY_IMAGE" image --download-db-only
+          for platform in linux windows; do
+            target=per-host-subnet
+            if [ "$platform" = windows ]; then target=per-host-subnet.exe; fi
+            docker run --rm -v "$product_tree/$platform:/scan:ro" \
+              -v "$PWD/evidence:/evidence" -v "$cache:/root/.cache/trivy" \
+              "$TRIVY_IMAGE" rootfs --skip-db-update --offline-scan \
+              --scanners vuln,secret --format json \
+              --output "/evidence/$platform-product-security.json" /scan
+            jq -e --arg target "$target" '
+              [.Results[]? | select(.Type == "gobinary")] as $go
+              | ($go | length) == 1
+                and (($go[0].Target | split("/") | last) == $target)
+                and ([.Results[]?.Secrets[]?] | length) == 0
+                and ([.Results[]?.Vulnerabilities[]?
+                      | select(.Severity == "HIGH" or .Severity == "CRITICAL")] | length) == 0
+            ' "evidence/$platform-product-security.json" >/dev/null
+            docker run --rm -v "$product_tree/$platform:/scan:ro" \
+              -v "$PWD/evidence:/evidence" -v "$cache:/root/.cache/trivy" \
+              "$TRIVY_IMAGE" rootfs --skip-db-update --offline-scan \
+              --format cyclonedx --output "/evidence/$platform-product.cdx.json" /scan
+            jq -e '.bomFormat == "CycloneDX" and (.components | length) > 0' \
+              "evidence/$platform-product.cdx.json" >/dev/null
+          done
 
       - name: Upload build evidence
         if: always()
