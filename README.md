@@ -16,6 +16,13 @@ the release also includes `SHA256SUMS`, a CycloneDX SBOM, and the binary scan
 report. PastureStack Server still carries the separately verified historical
 Windows compatibility asset version `0.2.4`.
 
+The current source prepares the numeric PastureStack `v0.2.5` security patch
+for the Windows `0.2.4` compatibility payload. It uses Go 1.27.3 without changing
+the network behavior, Go language minimum, or Windows ZIP layout. Publication
+is established by the official release assets and their checksums, not by this
+source statement. The earlier Linux prereleases remain separate historical
+evidence; a Windows cross-build does not establish privileged native support.
+
 ## Current scope
 
 - Reads a minimal host, network, and container model from the configured metadata URL.
@@ -34,7 +41,7 @@ The Windows setup script performs validation only unless `-Apply` is supplied. I
 
 ## Requirements
 
-- Go 1.27.0, as fixed by the `toolchain` directive and CI.
+- Go 1.27.3, as fixed by the `toolchain` directive and the SHA-256-verified official CI SDK; the Go language minimum remains 1.26.0.
 - Linux: `ipset` plus permission to manage routes and the dedicated IP set.
 - Windows: Docker with transparent-network support, PowerShell networking cmdlets, and a preconfigured running Routing and Remote Access service.
 - A compatible metadata service. Real platform integration and privileged network-namespace tests remain pending.
@@ -47,19 +54,25 @@ go vet ./...
 go build -trimpath -buildvcs=false ./
 ```
 
-The repository also provides `scripts/test`, `scripts/validate`, and `scripts/build` for local validation. To reproduce the `v0.2.8` package from its release source:
+The repository also provides `scripts/test`, `scripts/validate`, and `scripts/build` for local validation. To reproduce the `v0.2.5` package from its release source:
 
 ```sh
-RELEASE_VERSION=v0.2.8 SOURCE_DATE_EPOCH=0 make package
+RELEASE_VERSION=v0.2.5 SOURCE_DATE_EPOCH=0 make package
 ```
 
-This creates `dist/artifacts/per-host-subnet-v0.2.8-linux-amd64` for the overlay
+This creates `dist/artifacts/per-host-subnet-v0.2.5-linux-amd64` for the overlay
 package consumer, the Linux archive, a Windows review ZIP, and `SHA256SUMS` for
-the Linux artifacts. Confirm the raw binary's embedded Go version with
+all three product artifacts. Confirm each binary's embedded Go version with
 `go version -m`, compare it byte-for-byte with the Linux archive entry, and
 verify `SHA256SUMS` before use. Building the Windows review ZIP does not
 approve it for deployment. CI additionally checks the Linux binary's reported
-version and runs `govulncheck` on that exact packaged binary.
+version and runs `govulncheck` on that exact packaged binary. Both Linux ELF and
+Windows PE are checked for Go 1.27.3, CGO disabled, amd64/v1, and their target OS;
+the Windows package must contain the exact original startup script. Each actual
+binary is scanned as a positive `gobinary` rootfs target, with raw reports and
+CycloneDX SBOMs retained. The existing `-buildvcs=false` contract embeds no VCS
+identity; release provenance instead binds the original CI package bytes to the
+exact source revision and tree. The PE is read and scanned, never executed by CI.
 
 The historical Server build downloads its Windows compatibility asset from the
 matching versioned Server Release and verifies its SHA-256 digest. A future

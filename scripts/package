@@ -61,7 +61,7 @@ PY
 
 (
     cd dist/artifacts
-    sha256sum "${linux_raw##*/}" "${linux_artifact##*/}" > SHA256SUMS
+    sha256sum "${linux_raw##*/}" "${linux_artifact##*/}" "${windows_artifact##*/}" > SHA256SUMS
     sha256sum -c SHA256SUMS
 )
 

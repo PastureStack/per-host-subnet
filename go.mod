@@ -2,7 +2,7 @@ module github.com/PastureStack/per-host-subnet
 
 go 1.26.0
 
-toolchain go1.27.0
+toolchain go1.27.3
 
 require (
 	github.com/vishvananda/netlink v1.3.1
