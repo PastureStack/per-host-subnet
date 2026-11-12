@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
-      RELEASE_VERSION: v0.2.5
+      RELEASE_VERSION: v0.2.6
       GOTOOLCHAIN: local
       TRIVY_IMAGE: aquasec/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969
     steps:
@@ -36,11 +36,11 @@ jobs:
         run: |
           set -euo pipefail
           test "$RUNNER_ARCH" = X64
-          sdk="$RUNNER_TEMP/go1.27.3.linux-amd64.tar.gz"
+          sdk="$RUNNER_TEMP/go1.27.4.linux-amd64.tar.gz"
           curl --fail --silent --show-error --location --retry 2 \
-            https://go.dev/dl/go1.27.3.linux-amd64.tar.gz --output "$sdk"
+            https://go.dev/dl/go1.27.4.linux-amd64.tar.gz --output "$sdk"
           printf '%s  %s\n' \
-            65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40 \
+            7226736c2339719cda28fbf3a54d71aa63bcefe376e98cef00034268dab24840 \
             "$sdk" | sha256sum --check --strict -
           mkdir -p "$RUNNER_TEMP/per-host-subnet-go"
           tar -xzf "$sdk" -C "$RUNNER_TEMP/per-host-subnet-go"
@@ -50,7 +50,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test "$(go env GOVERSION)" = 'go1.27.3'
+          test "$(go env GOVERSION)" = 'go1.27.4'
           test -z "$(git status --porcelain)"
           bash scripts/validate
           ARCH=amd64 bash scripts/test
@@ -64,7 +64,7 @@ jobs:
             usr/bin/per-host-subnet | cmp - "$raw"
           mkdir -p evidence
           go version -m "$raw" | tee evidence/product-go-version.txt
-          grep -F "${raw}: go1.27.3" evidence/product-go-version.txt >/dev/null
+          grep -F "${raw}: go1.27.4" evidence/product-go-version.txt >/dev/null
           go version -m bin/windows/amd64/per-host-subnet.exe \
             | tee evidence/windows-product-go-version.txt
           for platform in linux windows; do
@@ -72,7 +72,7 @@ jobs:
             if [ "$platform" = windows ]; then
               report=evidence/windows-product-go-version.txt
             fi
-            grep -F ': go1.27.3' "$report" >/dev/null
+            grep -F ': go1.27.4' "$report" >/dev/null
             grep -Fx $'\tbuild\tCGO_ENABLED=0' "$report" >/dev/null
             grep -Fx $'\tbuild\tGOOS='"$platform" "$report" >/dev/null
             grep -Fx $'\tbuild\tGOARCH=amd64' "$report" >/dev/null
@@ -92,7 +92,7 @@ jobs:
           offset = struct.unpack_from('<I', executable, 0x3c)[0]
           assert executable[offset:offset + 4] == b'PE\0\0'
           assert struct.unpack_from('<H', executable, offset + 4)[0] == 0x8664
-          with zipfile.ZipFile('dist/artifacts/per-host-subnet-0.2.5-windows-amd64.zip') as archive:
+          with zipfile.ZipFile('dist/artifacts/per-host-subnet-0.2.6-windows-amd64.zip') as archive:
               assert archive.namelist() == [
                   'rancher/', 'rancher/per-host-subnet.exe',
                   'rancher/startup_per-host-subnet.ps1',
